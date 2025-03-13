@@ -1,4 +1,4 @@
-APP=nfs4_path_finderV2
+APP=nfs4_path_finder
 
 # this is for using distribution provided bpftool
 BPFTOOL=bpftool
@@ -6,7 +6,7 @@ BPFTOOL=bpftool
 
 .PHONY: $(APP)
 $(APP): skel
-		clang -lbpf nfs4_path_finderV2.c -lelf -o $(APP)
+		clang -lbpf nfs4_path_finder.c -lelf -o $(APP)
 
 .PHONY: vmlinux
 vmlinux:
@@ -14,11 +14,11 @@ vmlinux:
 
 .PHONY: bpf
 bpf: vmlinux
-		clang -g -O2 -target bpf -D__TARGET_ARCH_$(shell uname -m | cut -c -3) -c nfs4_path_finderV2.bpf.c -o nfs4_path_finderV2.bpf.o
+		clang -g -O2 -target bpf -D__TARGET_ARCH_$(shell uname -m | cut -c -3) -c nfs4_path_finder.bpf.c -o nfs4_path_finder.bpf.o
 
 .PHONY: skel
 skel: bpf
-		$(BPFTOOL) gen skeleton nfs4_path_finderV2.bpf.o name nfs4_path_finderV2 > nfs4_path_finderV2.skel.h
+		$(BPFTOOL) gen skeleton nfs4_path_finder.bpf.o name nfs4_path_finder > nfs4_path_finder.skel.h
 
 .PHONY: clean
 clean:

@@ -9,8 +9,8 @@
 #include <sys/resource.h>
 #include <signal.h>
 
-#include "nfs4_path_finderV2.h"
-#include "nfs4_path_finderV2.skel.h"
+#include "nfs4_path_finder.h"
+#include "nfs4_path_finder.skel.h"
 
 #define DEBUG
 #define HOST_NAME_MAX 64 
@@ -39,27 +39,27 @@ static size_t compose_out_filename(char* date_time_buf, size_t len) {
 //-----------------------------arg parsing-------------------------------
 
 const char argp_program_doc[] =
-"Trace NFSv4 paths to open files and a bunch of other metrics of processes when scheduled.\n"
+"Trace NFSv4 paths to open files and other metrics of scheduled processes.\n"
 "\n"
-"USAGE: ./nfs4_path_finderV2 [--help] | [-p PID] | [-u UID] | [-c CGROUP_ID] [-d DEBUG] [-f]\n"
-"NOTE: Use -p|-u|-c options one at a time only!\n"
+"USAGE: ./nfs4_path_finder [-h] ([-p PID] | [-u UID] | [-c CGROUP_ID]) [-d] [-f] [-v]\n"
 "\n"
 "EXAMPLES:\n"
-"    ./nfs4_path_finderV2           # trace paths with fs_type==nfs4\n"
-"    ./nfs4_path_finderV2 -p 181    # only trace PID 181\n"
-"    ./nfs4_path_finderV2 -u 1000   # only trace UID 1000\n"
-"    ./nfs4_path_finderV2 -c 1234   # only trace cgroup with ID 1234\n"
-"    ./nfs4_path_finderV2 -d DEBUG  # trace with debug output sent to /sys/kernel/tracing/trace_pipe\n"
-"    ./nfs4_path_finderV2 -f        # write trace output to /var/log/\n"
+"    ./nfs4_path_finder           # trace paths with fs_type==nfs4\n"
+"    ./nfs4_path_finder -p 181    # only trace PID 181\n"
+"    ./nfs4_path_finder -u 1000   # only trace UID 1000\n"
+"    ./nfs4_path_finder -c 1234   # only trace cgroup with ID 1234\n"
+"    ./nfs4_path_finder -d		  # trace with debug output sent to /sys/kernel/tracing/trace_pipe\n"
+"    ./nfs4_path_finder -f        # write trace output to /var/log/\n"
 "";
 
 static const struct argp_option opts[] = {
-	{ NULL, 'h', NULL, OPTION_HIDDEN, "Show the full help", 0 },
+	{ "help", 'h', NULL, 0, "Give this help list", 0 },
 	{ "pid", 'p', "PID", 0, "Process ID to trace", 0 },
 	{ "uid", 'u', "UID", 0, "User ID to trace", 0 },
 	{ "cgid", 'c', "CGROUP_ID", 0, "CGROUP ID to trace", 0 },
-	{ "dbg", 'd', "DEBUG", 0, "trace with debug output", 0 },
-		{ "file", 'f', NULL, 0, "write trace to /var/log/", 0 },
+	{ "debug", 'd', NULL, 0, "trace with debug output", 0 },
+	{ "file", 'f', NULL, 0, "write trace to /var/log/", 0 },
+	{"version", 'v', NULL,0, "Print version and exit",0},
 	{},
 };
 
@@ -70,8 +70,11 @@ static error_t parse_arg(int opt, char *arg, struct argp_state *state)
 
 	switch (opt) {
 	case 'h':
-		argp_usage(state);
+		argp_state_help(state, stderr, ARGP_HELP_STD_HELP);
 		break;
+	case 'v':
+		printf("\nnfs4_path_finder - version 2.0 -\n\n");
+		exit(0);
 	case 'c':
 		errno = 0;
 		cgid = strtol(arg, NULL, 10);
@@ -289,7 +292,7 @@ int main(int argc, char** argv)
 	gethostname(hostname, HOST_NAME_MAX);
     
 	if (file) {
-		char date_time[64] = "/var/log/bpf_nfs4_path_finderV2_";
+		char date_time[64] = "/var/log/bpf_nfs4_path_finder_";
 		size_t len = strlen(date_time);
 		size_t ret;
 		if (0 > (ret = compose_out_filename(date_time, len))) {
@@ -304,13 +307,13 @@ int main(int argc, char** argv)
 			return 1;
 		}
 	}
-    struct nfs4_path_finderV2* skel = nfs4_path_finderV2__open();
+    struct nfs4_path_finder* skel = nfs4_path_finder__open();
     if (!skel) {
         perror("bpf_skel_open failed!");
         return 1;
      }   
 
-	err = nfs4_path_finderV2__load(skel);
+	err = nfs4_path_finder__load(skel);
 	if (err) {
         perror("bpf_skel_load failed!");
         goto cleanup;
@@ -322,7 +325,7 @@ int main(int argc, char** argv)
 	skel->bss->rqst_cgid = rqstd_cgid;
 	skel->bss->set_debug = set_debug;
 	
-	err = nfs4_path_finderV2__attach(skel);
+	err = nfs4_path_finder__attach(skel);
 	if (err) {
         perror("bpf_skel_attach failed!");
         goto cleanup;
@@ -333,7 +336,7 @@ int main(int argc, char** argv)
 		goto cleanup;
 
 	}
-	printf("Kprobe 'nfs4_path_finderV2' attached to kernel hook!\n");
+	printf("BPF probe 'nfs4_path_finder' attached to kernel hook!\n");
 	
 	while(keep_running) 
 	{
@@ -353,7 +356,7 @@ int main(int argc, char** argv)
 	}// end while
 
 cleanup:	
-	nfs4_path_finderV2__destroy(skel);
+	nfs4_path_finder__destroy(skel);
 	if (ring_buff)
 		ring_buffer__free(ring_buff);
 	if (file)

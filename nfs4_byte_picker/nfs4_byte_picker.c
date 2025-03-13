@@ -39,25 +39,25 @@ static size_t compose_out_filename(char* date_time_buf, size_t len) {
 //-----------------------------arg parsing-------------------------------
 
 const char argp_program_doc[] =
-"Collect bytes sent and received via NFSv4+ by a process or user.\n"
+"Collect bytes sent and received via NFSv4+ (among other metrics) on a user process basis.\n"
 "\n"
-"USAGE: nfs4_byte_picker [-h] [-p PID] [-u UID] [-d DEBUG]\n"
-"NOTE: Do only use one option at a time!\n"
+"USAGE: nfs4_byte_picker [-h] ([-p PID] | [-u UID]) [-d] [-f] [-v]\n"
 "\n"
 "EXAMPLES:\n"
 "    ./nfs4_byte_picker           # trace all NFSv4+ calls\n"
 "    ./nfs4_byte_picker -p 181    # only trace PID 181\n"
 "    ./nfs4_byte_picker -u 1000   # only trace UID 1000\n"
-"    ./nfs4_byte_picker -d DEBUG  # enable bpf_printk debug (call 'cat /sys/kernel/tracing/trace_pipe' to view debug output)\n"
+"    ./nfs4_byte_picker -d 		  # enable bpf_printk debug (call 'cat /sys/kernel/tracing/trace_pipe' to view debug output)\n"
 "	 ./nfs4_byte_picker -f        # write trace output to /var/log/\n"
 "";
 
 static const struct argp_option opts[] = {
-	{ NULL, 'h', NULL, OPTION_HIDDEN, "Show the full help", 0 },
+	{ "help", 'h', NULL, 0, "Give this help list", 0 },
 	{ "pid", 'p', "PID", 0, "Process ID to trace", 0 },
 	{ "uid", 'u', "UID", 0, "User ID to trace", 0 },
-	{ "debug", 'd', "DEBUG", 0, "Enable bpf_printk debug", 0 },
+	{ "debug", 'd', NULL, 0, "Enable bpf_printk debug", 0 },
 	{"file", 'f', NULL, 0, "write trace to /var/log/", 0},
+	{"version", 'v', NULL,0, "Print version and exit",0},
 	{},
 };
 
@@ -67,43 +67,46 @@ static error_t parse_arg(int opt, char *arg, struct argp_state *state)
 	long int pid, uid;
 
 	switch (opt) {
-	case 'd':
-		set_debug = 1;
-		break;
-	case 'h':
-		argp_usage(state);
-		break;
-	case 'p':
-		errno = 0;
-		pid = strtol(arg, NULL, 10);
-		if (errno || pid <= 0) {
-			fprintf(stderr, "Invalid PID: %s\n", arg);
-			argp_usage(state);
-		}
-		rqstd_pid  = pid;
-		break;
-	case 'u':
-		errno = 0;
-		uid = strtol(arg, NULL, 10);
-		if (errno || uid < 0) {
-			fprintf(stderr, "Invalid UID %s\n", arg);
-			argp_usage(state);
-		}
-		rqstd_uid  = uid;
-		break;
-	case 'f':
-		file = true;
-		break;
-	case ARGP_KEY_ARG:
-		if (pos_args++) {
-			fprintf(stderr,
-				"Unrecognized positional argument: %s\n", arg);
-			argp_usage(state);
-		}
-		errno = 0;
-		break;
-	default:
-		return ARGP_ERR_UNKNOWN;
+		case 'h':
+			argp_state_help(state, stderr, ARGP_HELP_STD_HELP);
+			break;
+		case 'v':
+			printf("\nnfs4_byte_picker - version 1.0 -\n\n");
+			exit(0);
+		case 'd':
+			set_debug = 1;
+			break;
+		case 'p':
+			errno = 0;
+			pid = strtol(arg, NULL, 10);
+			if (errno || pid <= 0) {
+				fprintf(stderr, "Invalid PID: %s\n", arg);
+				argp_usage(state);
+			}
+			rqstd_pid  = pid;
+			break;
+		case 'u':
+			errno = 0;
+			uid = strtol(arg, NULL, 10);
+			if (errno || uid < 0) {
+				fprintf(stderr, "Invalid UID %s\n", arg);
+				argp_usage(state);
+			}
+			rqstd_uid  = uid;
+			break;
+		case 'f':
+			file = true;
+			break;
+		case ARGP_KEY_ARG:
+			if (pos_args++) {
+				fprintf(stderr,
+					"Unrecognized positional argument: %s\n", arg);
+				argp_usage(state);
+			}
+			errno = 0;
+			break;
+		default:
+			return ARGP_ERR_UNKNOWN;
 	}
 	return 0;
 }

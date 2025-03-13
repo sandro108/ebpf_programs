@@ -21,7 +21,7 @@ static volatile sig_atomic_t keep_running = 1;
 
 static char hostname[HOST_NAME_MAX] = "null";
 static FILE* f_desc = NULL;
-
+static bool file = false;
 static __u16 char_cnt = 0;
 
 static size_t compose_out_filename(char* date_time_buf, size_t len) {
@@ -35,24 +35,28 @@ static size_t compose_out_filename(char* date_time_buf, size_t len) {
 //-----------------------------arg parsing-------------------------------
 
 const char argp_program_doc[] =
-"Collect socket information of a process or user.\n"
+"Collect socket information of scheduled processes.\n"
 "\n"
-"USAGE: socket_collector [-h] [-p PID] [-u UID] [-d DEBUG]\n"
-"NOTE: Do only use one option at a time!\n"
+"USAGE: socket_collector [-h] ([-p PID] | [-u UID]) [-d] [-f] [-v]\n"
 "\n"
 "EXAMPLES:\n"
 "    ./socket_collector           # trace all processes and users\n"
 "    ./socket_collector -p 181    # only trace PID 181\n"
 "    ./socket_collector -u 1000   # only trace UID 1000\n"
-"    ./socket_collector -d DEBUG  # enable bpf_printk debug (call 'cat /sys/kernel/tracing/trace_pipe' to view debug output)\n"
-"";
+"    ./socket_collector -d 		  # enable bpf_printk debug (call 'cat /sys/kernel/tracing/trace_pipe' to view debug output)\n"
+"    ./socket_collector -f        # write trace output to /var/log/\n"
+""
+
+;
 
 static const struct argp_option opts[] = {
-    { NULL, 'h', NULL, OPTION_HIDDEN, "Show the full help", 0 },
+    { "help", 'h', NULL, 0, "Give this help list", 0 },
     { "pid", 'p', "PID", 0, "Process ID to trace", 0 },
     { "uid", 'u', "UID", 0, "User ID to trace", 0 },
-    { "debug", 'd', "DEBUG", 0, "Enable bpf_printk debug", 0 },
-    {},
+    { "debug", 'd', NULL, 0, "Enable bpf_printk debug", 0 },
+    {"file", 'f', NULL, 0, "write trace to /var/log/", 0},
+	{"version", 'v', NULL,0, "Print version and exit",0},
+	{},
 };
 
 static error_t parse_arg(int opt, char *arg, struct argp_state *state)
@@ -61,40 +65,46 @@ static error_t parse_arg(int opt, char *arg, struct argp_state *state)
     long int pid, uid;
 
     switch (opt) {
-    case 'd':
-        set_debug = 1;
-        break;
-    case 'h':
-        argp_usage(state);
-        break;
-    case 'p':
-        errno = 0;
-        pid = strtol(arg, NULL, 10);
-        if (errno || pid <= 0) {
-            fprintf(stderr, "Invalid PID: %s\n", arg);
-            argp_usage(state);
-        }
-        rqstd_pid  = pid;
-        break;
-    case 'u':
-        errno = 0;
-        uid = strtol(arg, NULL, 10);
-        if (errno || uid < 0) {
-            fprintf(stderr, "Invalid UID %s\n", arg);
-            argp_usage(state);
-        }
-        rqstd_uid  = uid;
-        break;
-    case ARGP_KEY_ARG:
-        if (pos_args++) {
-            fprintf(stderr,
-                "Unrecognized positional argument: %s\n", arg);
-            argp_usage(state);
-		}
-        errno = 0;
-        break;
-    default:
-        return ARGP_ERR_UNKNOWN;
+		case 'd':
+			set_debug = 1;
+			break;
+		case 'h':
+			argp_state_help(state, stderr, ARGP_HELP_STD_HELP);
+			break;
+		case 'v':
+			printf("\nsocket_collector - version 1.0 -\n\n");
+			exit(0);
+		case 'p':
+			errno = 0;
+			pid = strtol(arg, NULL, 10);
+			if (errno || pid <= 0) {
+				fprintf(stderr, "Invalid PID: %s\n", arg);
+				argp_usage(state);
+			}
+			rqstd_pid  = pid;
+			break;
+		case 'u':
+			errno = 0;
+			uid = strtol(arg, NULL, 10);
+			if (errno || uid < 0) {
+				fprintf(stderr, "Invalid UID %s\n", arg);
+				argp_usage(state);
+			}
+			rqstd_uid  = uid;
+			break;
+		case 'f':
+			file = true;
+			break;
+		case ARGP_KEY_ARG:
+			if (pos_args++) {
+				fprintf(stderr,
+					"Unrecognized positional argument: %s\n", arg);
+				argp_usage(state);
+			}
+			errno = 0;
+			break;
+		default:
+			return ARGP_ERR_UNKNOWN;
     }
     return 0;
 }
@@ -325,7 +335,13 @@ TCP_ESTABLISHED = 1,
         	return 1;
     	}
 
-	fprintf(f_desc, "%s", sock_buff);
+	if (file) {
+        fprintf(f_desc, "%s", sock_buff);
+    }
+    else {
+        printf("%s", sock_buff);
+    }
+
 	char_cnt = 0;
 	return 0;
 
@@ -359,21 +375,22 @@ int main(int argc, char** argv)
     /* in case of error hostname stays "null" */
     gethostname(hostname, HOST_NAME_MAX);
     
-    char date_time[64] = "bpf_socket_collector_metrics_";
-    size_t len = strlen(date_time);
-    size_t ret;
-    if (0 > (ret = compose_out_filename(date_time, len))) {
-        perror("out_filename");
-        return 1;
-    }
+    if (file) {
+		char date_time[64] = "/var/log/bpf_socket_collector_";
+		size_t len = strlen(date_time);
+		size_t ret;
+		if (0 > (ret = compose_out_filename(date_time, len))) {
+			perror("out_filename");
+			return 1;
+		}
 
-    char* file = date_time;
+		char* file = date_time;
 
-    if (NULL == (f_desc = fopen(file, "a"))) {
-        perror("Could not open file for appending." );
-        return 1;
-    }
-
+		if (NULL == (f_desc = fopen(file, "a"))) {
+			perror("Could not open file for appending." );
+			return 1;
+		}
+	}
 
     struct socket_collector* skel = socket_collector__open();
     if (!skel) {
@@ -425,8 +442,10 @@ int main(int argc, char** argv)
 
 cleanup:
     socket_collector__destroy(skel);
-    ring_buffer__free(ring_buff);
-    fclose(f_desc);
+    if (ring_buff)
+		ring_buffer__free(ring_buff);
+    if (file)
+        fclose(f_desc);
     printf("Cleanup....done!\nBye :)\n");
     return err;
 }

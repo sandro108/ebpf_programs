@@ -3,7 +3,7 @@
 #include <bpf/bpf_core_read.h>
 #include <bpf/bpf_tracing.h>
 #include <bpf/bpf_endian.h>
-#include "nfs4_path_finderV2.h"
+#include "nfs4_path_finder.h"
 
 
 char LICENSE[] SEC("license") = "GPL";
@@ -52,7 +52,7 @@ struct {
 
 
 SEC("kprobe/schedule") /* as defined in /kernel/sched/core.c */
-int nfs4_pathfinderV(struct pt_regs *ctx)
+int nfs4_pathfinder(struct pt_regs *ctx)
 {
 	__u64 id      = bpf_get_current_pid_tgid();
 	__u32 pid     = id;

@@ -45,10 +45,12 @@ struct hash_node {
 };
 
 const char argp_program_doc[] =
-"\nTrace open() syscalls, that have the O_CREAT flag set, and all stat syscalls (for now, filter options are comming...).\n"
-"Purpose is to find out whether processes call stat() on the parent directory of a file they have opened.\n"
+"\nTrace open() syscalls, that have the O_CREAT flag set, together with all stat syscalls.\n"
+"Purpose is to find out whether processes call stat() on the parent directory of a file they have opened. If this case occurs an alert is written to stdout.\n"
+"The paths opened are stored in a hash table for comparison with paths stat'ed by the same process with a given PID.\n"
 "The optional MAX_CHAIN_LENGTH integer argument determines the number of entries per bucket of the hash table that the program will allocate (default is 100).\n"
 "The total size of the hash table is MAX_CHAIN_LENGTH * 100 buckets.\n"
+"If the MAX_CHAIN_LENGTH of a bucket is exceeded, a new entry will still be appended but causes the head entry (oldest entry) to be deleted.\n"
 "USAGE: open_stat_interceptor [-h] [-p PID] [-m MAX_CHAIN_LENGTH] [-d] [-v]\n"
 "\n"
 "EXAMPLES:\n"
@@ -61,7 +63,7 @@ const char argp_program_doc[] =
 static const struct argp_option opts[] = {
 	{"max_chain_len", 'm', "MAX_CHAIN_LEN",0, "Max hash chain length",0 },
 	{ "pid", 'p', "PID", 0, "Process ID to trace", 0 },
-	{ NULL, 'h', NULL, OPTION_HIDDEN, "Show this help", 0 },
+	{ "help", 'h', NULL, 0, "Give this help list", 0 },
 	{"debug", 'd', NULL,0, "Enable debug output",0},
 	{"version", 'v', NULL,0, "Print version and exit",0},
 	{}
@@ -225,18 +227,20 @@ static int handle_event(void *ctx, void *data, size_t data_sz)
 		
 		
 		/* below loop is for debugging purpose, only active when '-d' option was set */
+		if (set_debug) {
+			temp = hash_table[hash];
+			DEBUG_PRINT("\n######################### Hash table bucket no. %u: ##############################\n",hash);
+			while (temp) {
+				DEBUG_PRINT("node: %p, hash: %u, pid: %u, path: %s, next: %p\n", temp, hash, temp->pid, temp->path, temp->next);
+				temp = temp->next;
+			}
+			DEBUG_PRINT("\n");
+			/* if all went well print metrics of open(O_CREATE) syscall, if '-d' option was set  */
+			DEBUG_PRINT("%-35s %-18s %-8s %-7s %-20s %-8s %-10s %-10s %-8s %-s\n",
+			   "HOST", "TIMESTAMP", "UID", "PID", "CMD", "CALL", "FLAGS", "FD/RET_VAL", "ERR", "PATH");
+			DEBUG_PRINT("%-35s %-18llu %-8u %-7u %-20s %-8s %-10s %-10d %-8d %-s \n\n",hostname, event->ts_us, event->uid, event->pid, event->comm, "open()", "O_CREAT", ret_code, err, event->pathname);
 		
-		temp = hash_table[hash];
-		DEBUG_PRINT("Hash table bucket no. %u:\n",hash);
-		while (temp) {
-			DEBUG_PRINT("node: %p, hash: %u, pid: %u, path: %s, next: %p\n", temp, hash, temp->pid, temp->path, temp->next);
-			temp = temp->next;
 		}
-		DEBUG_PRINT("\n");
-		/* if all went well print metrics of open(O_CREATE) syscall, if '-d' option was set  */
-		DEBUG_PRINT("%-35s %-18s %-8s %-7s %-20s %-8s %-10s %-10s %-8s %-s\n",
-	       "HOST", "TIMESTAMP", "UID", "PID", "CMD", "CALL", "FLAGS", "FD/RET_VAL", "ERR", "PATH");
-		DEBUG_PRINT("%-35s %-18llu %-8u %-7u %-20s %-8s %-10s %-10d %-8d %-s \n\n",hostname, event->ts_us, event->uid, event->pid, event->comm, "open()", "O_CREAT", ret_code, err, event->pathname);
 	}
 	
 
@@ -252,8 +256,8 @@ static int handle_event(void *ctx, void *data, size_t data_sz)
 		else {
 			while (temp) {
 				if (temp->pid == event->pid && (0 == strcmp(temp->path, event->pathname))) {
-					printf("#################################################################################################################\n");
-					printf("!!!!!Stat!!!!!: Match found: hash_entry->PID: %u, hash_entry->time_stamp: %lu, hash_entry->path: %s\n", temp->pid,temp->time_stamp, temp->path);
+					printf("######################################## !!!!!!!ALERT!!!!!! #################################################\n");
+					printf("Match found:\nhash table entry->PID: %u\nhash table entry->time_stamp: %lu\nhash table entry->path: %s\n", temp->pid,temp->time_stamp, temp->path);
 					time_stp = temp->time_stamp;
 					goto alert;
 				}
@@ -274,7 +278,7 @@ alert:
 		printf("%-35s %-18s %-8s %-7s %-20s %-8s %-10s %-10s %-8s %-s\n",
 	       "HOST", "TIMESTAMP", "UID", "PID", "CMD", "CALL", "FLAGS", "FD/RET_VAL", "ERR", "PATH");
 		printf("%-35s %-18llu %-8u %-7u %-20s %-8s %-10s %-10d %-8d %-s\n",hostname, event->ts_us, event->uid, event->pid, event->comm, "stat()",      "-",  ret_code, err, event->pathname);
-		printf("!!!!!!!ALERT!!!!!! Stat on parent directory! By PID: %u, time_betw_open and_stat_us: %llu,  on path: %s\n\n", event->pid,(event->ts_us - time_stp), event->pathname);
+		printf("Stat on parent directory!\nby PID: %u\non path: %s\ntime between open and stat in us: %llu\n\n", event->pid, event->pathname, (event->ts_us - time_stp));
 		printf("#################################################################################################################\n\n");
 
 		return 0;
@@ -336,7 +340,7 @@ int main(int argc, char **argv)
         goto cleanup;
     }
 
-    printf("Kprobe 'open_stat_interceptor2' attached to kernel hook!\n");
+    printf("BPF probe 'open_stat_interceptor' attached to kernel hook!\n");
 
    
 
@@ -360,7 +364,8 @@ int main(int argc, char **argv)
 
 cleanup:
     open_stat_interceptor__destroy(skel);
-    ring_buffer__free(ring_buff);
+    if (ring_buff)	
+		ring_buffer__free(ring_buff);
 	int hash = 0;
 	struct hash_node* node;
 	struct hash_node* temp;
